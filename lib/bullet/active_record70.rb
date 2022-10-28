@@ -60,28 +60,25 @@ module Bullet
         end
       )
 
-      ::ActiveRecord::Associations::Preloader::Batch.prepend(
+      ::ActiveRecord::Associations::Preloader.prepend(
         Module.new do
-          def call
+          def preloaders_for_one(association, records, scope, polymorphic_parent)
             if Bullet.start?
-              @preloaders.each do |preloader|
-                preloader.records.each { |record| Bullet::Detector::Association.add_object_associations(record, preloader.associations) }
-                Bullet::Detector::UnusedEagerLoading.add_eager_loadings(preloader.records, preloader.associations)
+              records.compact!
+              if records.first.class.name !~ /^HABTM_/
+                records.each { |record| Bullet::Detector::Association.add_object_associations(record, association) }
+                Bullet::Detector::UnusedEagerLoading.add_eager_loadings(records, association)
               end
             end
             super
           end
-        end
-      )
 
-      ::ActiveRecord::Associations::Preloader::Branch.prepend(
-        Module.new do
-          def preloaders_for_reflection(reflection, reflection_records)
+          def preloaders_for_reflection(reflection, records, scope)
             if Bullet.start?
-              reflection_records.compact!
-              if reflection_records.first.class.name !~ /^HABTM_/
-                reflection_records.each { |record| Bullet::Detector::Association.add_object_associations(record, reflection.name) }
-                Bullet::Detector::UnusedEagerLoading.add_eager_loadings(reflection_records, reflection.name)
+              records.compact!
+              if records.first.class.name !~ /^HABTM_/
+                records.each { |record| Bullet::Detector::Association.add_object_associations(record, reflection.name) }
+                Bullet::Detector::UnusedEagerLoading.add_eager_loadings(records, reflection.name)
               end
             end
             super
@@ -179,7 +176,7 @@ module Bullet
                   Bullet::Detector::NPlusOneQuery.call_association(owner, through_reflection.name)
                 end
               end
-              Bullet::Detector::NPlusOneQuery.call_association(owner, reflection.name)
+              Bullet::Detector::NPlusOneQuery.call_association(owner, reflection.name) unless @inversed
               if records.first.class.name !~ /^HABTM_/
                 if records.size > 1
                   Bullet::Detector::NPlusOneQuery.add_possible_objects(records)
@@ -210,11 +207,11 @@ module Bullet
       ::ActiveRecord::Associations::SingularAssociation.prepend(
         Module.new do
           # call has_one and belongs_to associations
-          def reader
-            result = super
+          def target
+            result = super()
 
             if Bullet.start?
-              if owner.class.name !~ /^HABTM_/
+              if owner.class.name !~ /^HABTM_/ && !@inversed
                 if is_a? ::ActiveRecord::Associations::ThroughAssociation
                   Bullet::Detector::NPlusOneQuery.call_association(owner, reflection.through_reflection.name)
                   association = owner.association(reflection.through_reflection.name)
